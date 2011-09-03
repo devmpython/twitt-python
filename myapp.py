@@ -75,9 +75,9 @@ class Application(web.Application):
         
 class TimelineHandler(web.RequestHandler):
     def compute_etag(self):
-        return ""
+        return None
     
-    #SUPPORTED_METHODS = ("GET",)
+    SUPPORTED_METHODS = ("GET",)
     
     def get(self, type):
         screen_name = self.get_argument("screen_name")
@@ -88,6 +88,7 @@ class TimelineHandler(web.RequestHandler):
 
         if statuses:
             self.write(json.dumps(statuses))
+            self.set_header("Content-type", "application/json; charset=UTF-8")
         else:
             self.set_status(204)
         self.finish()
