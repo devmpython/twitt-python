@@ -68,8 +68,10 @@ class Application(web.Application):
         for i, db in enumerate(self.dbs):
             if not ids[i]:
                 continue
-            ids_str = ",".join(str(e) for e in ids[i])
-            rows.extend(db.query(query, ids_str, limit))
+            q_str = query % (",".join("%s" for i in xrange(len(ids[i]))), "%s")
+            params = list(ids[i])
+            params.append(limit)
+            rows.extend(db.query(q_str, *params))
 
         return map(lambda row: {
             "created_at": row["created_at"].isoformat(),
