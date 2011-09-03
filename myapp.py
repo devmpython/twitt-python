@@ -153,5 +153,5 @@ class UpdateHandler(web.RequestHandler):
 if __name__ == "__main__":
     http_server = httpserver.HTTPServer(Application())
     http_server.bind(8888)
-    http_server.start(0)
+    http_server.start(20)
     ioloop.IOLoop.instance().start()
