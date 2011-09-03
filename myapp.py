@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from tornado import ioloop, web, httpserver, database
+import json
 
 class Application(web.Application):
     def __init__(self):
@@ -44,35 +45,53 @@ class Application(web.Application):
                                  "WHERE user_id=%s", user_id)
     	return u
 
-    def user_statuses(self, username, limit=10):
+
+    def get_db(self, user_id):
+        return self.dbs[(user_id-1) % 4]
+        
+    def friends_statuses(self, username, limit=20):
+        user_id = self.get_user_id()
+        db = self.get_db(user_id)
+	u = db.iter("SELECT follower_id AS id from followers "
+                    "WHERE user_id=%s", user_id)
+	return u
+
+        
+    def user_statuses(self, username, limit=20):
         user_id = self.get_user_id(username)
-        db = self.dbs[user_id % len(self.dbs)]
+        db = self.get_db(user_id)
         rows = db.iter("SELECT id, created_at, text FROM statuses "
                        "WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
                        user_id, limit)
-        result = [];
+        result = []
         for row in rows:
-            rows.insert({
-                "key": "value"
+            result.append({
+                "id": row["id"],
+                "created_at": row["created_at"].strftime("%a %b %d %H:%M:%S %z %Y"),
+                "text": row["text"]
             })
-           
+        return result
+        
+        
 class TimelineHandler(web.RequestHandler):
-
-    SUPPORTED_METHODS = ("GET",)
+    def compute_etag(self):
+        return ""
+    
+    #SUPPORTED_METHODS = ("GET",)
     
     def get(self, type):
         screen_name = self.get_argument("screen_name")
         if type is "home":
             statuses = self.application.fiends_statuses(screen_name)
         else:
-            statuses = self.application.user_statuses(screen_name)
+            statuses = self.application.user_statuses(screen_name, 20)
 
-        if statuses is None:
-            self.set_status(204)
-            self.finish()
+        if statuses:
+            self.write(json.dumps(statuses))
         else:
-            self.write(statuses)
-
+            self.set_status(204)
+        self.finish()
+        
 
 class UpdateHandler(web.RequestHandler):
     SUPPORTED_METHODS = ("POST", )
@@ -86,4 +105,3 @@ if __name__ == "__main__":
     http_server.bind(8888)
     http_server.start(0)
     ioloop.IOLoop.instance().start()
-
