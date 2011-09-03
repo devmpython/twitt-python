@@ -82,7 +82,7 @@ class TimelineHandler(web.RequestHandler):
     def get(self, type):
         screen_name = self.get_argument("screen_name")
         if type is "home":
-            statuses = self.application.fiends_statuses(screen_name)
+            statuses = self.application.friends_statuses(screen_name)
         else:
             statuses = self.application.user_statuses(screen_name, 20)
 
