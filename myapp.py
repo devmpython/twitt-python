@@ -2,14 +2,15 @@
 from tornado import ioloop, web, httpserver, database
 import json
 import datetime
+import operator
 
 class Application(web.Application):
     def __init__(self):
         handlers = [
-            (r"/statuses/(?P<type>home|user)_timeline.json", TimelineHandler),
+            (r"/statuses/(?P<req_type>home|user)_timeline.json", TimelineHandler),
             (r"/statuses/update.json", UpdateHandler),
         ]
-        
+
         self.dbs = [
             database.Connection(host="10.1.1.10",
                                 user="devcamp",
@@ -38,26 +39,49 @@ class Application(web.Application):
             if row:
                 return row["id"]
         raise Exception("user not found")
-                
-    def friends_statuses(self, username, limit):
-        user_id = self.get_user_id(username)
-        db = self.dbs[user_id % len(self.dbs)]
-        u = db.iter("SELECT follower_id AS id from followers "\
-                                 "WHERE user_id=%s", user_id)
-    	return u
-
 
     def get_db(self, user_id):
         return self.dbs[(user_id-1) % 4]
-        
-    def friends_statuses(self, username, limit=20):
-        user_id = self.get_user_id()
-        db = self.get_db(user_id)
-	u = db.iter("SELECT follower_id AS id from followers "
-                    "WHERE user_id=%s", user_id)
-	return u
 
+    def friends_statuses(self, username, limit=20):
+        user_id = self.get_user_id(username)
+        db = self.get_db(user_id)
+        ids = (set(), set(), set(), set())
+        for row in db.iter("SELECT follower_id AS id from followers "
+                           "WHERE user_id=%s", user_id):
+            ids[(row["id"] - 1) % 4].add(row["id"])
+
+        query = """
+        SELECT statuses.created_at AS created_at,
+               statuses.text AS text,
+               statuses.id AS stat_id,
+               users.name AS user_name,
+               user_id,
+               screen_name
+        FROM statuses JOIN users ON user_id=users.id
+        WHERE user_id IN (%s)
+        ORDER BY created_at DESC
+        LIMIT %s
+        """
+        rows = []
         
+        for i, db in enumerate(self.dbs):
+            if not ids[i]:
+                continue
+            ids_str = ",".join(str(e) for e in ids[i])
+            rows.extend(db.query(query, ids_str, limit))
+
+        return map(lambda row: {
+            "created_at": row["created_at"].isoformat(),
+            "text": row["text"],
+            "id": row["stat_id"],
+            "user": {
+                "name": row["user_name"],
+                "id": row["user_id"],
+                "screen_name": row["screen_name"],
+            }
+        }, sorted(rows, key=operator.itemgetter("created_at"))[0:limit])
+
     def user_statuses(self, username, limit=20):
         user_id = self.get_user_id(username)
         db = self.get_db(user_id)
@@ -68,7 +92,7 @@ class Application(web.Application):
         for row in rows:
             result.append({
                 "id": row["id"],
-                "created_at": row["created_at"].strftime("%a %b %d %H:%M:%S %z %Y"),
+                "created_at": row["created_at"].isoformat(), # .strftime("%a %b %d %H:%M:%S %z %Y"),
                 "text": row["text"]
             })
         return result
@@ -85,20 +109,21 @@ class Application(web.Application):
             "id": status_id,
             "created_at": created_at
         }
-        
+
         
 class TimelineHandler(web.RequestHandler):
+    """ doc """
     def compute_etag(self):
         return None
-    
+
     SUPPORTED_METHODS = ("GET",)
-    
-    def get(self, type):
+
+    def get(self, req_type):
         screen_name = self.get_argument("screen_name")
-        if type is "home":
+        if req_type == "home":
             statuses = self.application.friends_statuses(screen_name)
         else:
-            statuses = self.application.user_statuses(screen_name, 20)
+            statuses = self.application.user_statuses(screen_name)
 
         if statuses:
             self.write(json.dumps(statuses))
@@ -106,7 +131,7 @@ class TimelineHandler(web.RequestHandler):
         else:
             self.set_status(204)
         self.finish()
-        
+
 
 class UpdateHandler(web.RequestHandler):
     SUPPORTED_METHODS = ("POST", )
@@ -115,7 +140,7 @@ class UpdateHandler(web.RequestHandler):
         screen_name = self.get_argument("screen_name")
         result = self.application.add_status(screen_name, self.get_argument('status'))
         self.write(result)
-        
+
 if __name__ == "__main__":
     http_server = httpserver.HTTPServer(Application())
     http_server.bind(8888)
