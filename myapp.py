@@ -53,7 +53,7 @@ class Application(web.Application):
             ids[(row["id"] - 1) % 4].add(row["id"])
 
         ids[(user_id - 1) % 4].add(user_id)
-        
+
         query = """
         SELECT statuses.created_at AS created_at,
                statuses.text AS text,
@@ -67,7 +67,7 @@ class Application(web.Application):
         LIMIT %s
         """
         rows = []
-        
+
         for i, db in enumerate(self.dbs):
             if not ids[i]:
                 continue
@@ -88,8 +88,6 @@ class Application(web.Application):
         }, sorted(rows, reverse=True, key=operator.itemgetter("created_at"))[0:limit])
 
     def user_statuses(self, username, limit=20):
-        print "wgerqghrthtyjyt"
-        #from ipdb import set_trace; set_trace()
         user_id = self.get_user_id(username)
         db = self.get_db(user_id)
         rows = db.iter("SELECT id, created_at, text FROM statuses "
@@ -103,21 +101,21 @@ class Application(web.Application):
                 "text": row["text"]
             })
         return result
-        
+
     def add_status(self, screen_name, status):
         user_id = self.get_user_id(screen_name)
         db = self.get_db(user_id)
         created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         updated_at = created_at
-        
+
         status_id = db.execute("INSERT INTO statuses VALUES(NULL, %s, %s, %s, %s)", status, user_id, created_at, updated_at);
-        
+
         return {
             "id": status_id,
             "created_at": created_at
         }
 
-        
+
 class TimelineHandler(web.RequestHandler):
     """ doc """
     def compute_etag(self):
@@ -127,13 +125,17 @@ class TimelineHandler(web.RequestHandler):
 
     def get(self, req_type):
         screen_name = self.get_argument("screen_name")
-        if req_type == "home":
-            statuses = self.application.friends_statuses(screen_name)
-        else:
-            statuses = self.application.user_statuses(screen_name)
+        statuses = None
+        try:
+            if req_type == "home":
+                statuses = self.application.friends_statuses(screen_name)
+            else:
+                statuses = self.application.user_statuses(screen_name)
+        except:
+            self.set_status(204)
 
         if statuses:
-            self.write(json.dumps(statuses), separators=(',', ':'))
+            self.write(json.dumps(statuses, separators=(',', ':')))
             self.set_header("Content-type", "application/json; charset=UTF-8")
         else:
             self.set_status(204)
