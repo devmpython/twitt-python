@@ -51,6 +51,8 @@ class Application(web.Application):
                            "WHERE user_id=%s", user_id):
             ids[(row["id"] - 1) % 4].add(row["id"])
 
+        ids[(user_id - 1) % 4].add(user_id)
+        
         query = """
         SELECT statuses.created_at AS created_at,
                statuses.text AS text,
@@ -85,6 +87,8 @@ class Application(web.Application):
         }, sorted(rows, reverse=True, key=operator.itemgetter("created_at"))[0:limit])
 
     def user_statuses(self, username, limit=20):
+        print "wgerqghrthtyjyt"
+        #from ipdb import set_trace; set_trace()
         user_id = self.get_user_id(username)
         db = self.get_db(user_id)
         rows = db.iter("SELECT id, created_at, text FROM statuses "
