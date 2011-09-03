@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from tornado import ioloop, web, httpserver, database
 import json
+import datetime
 
 class Application(web.Application):
     def __init__(self):
@@ -72,6 +73,19 @@ class Application(web.Application):
             })
         return result
         
+    def add_status(self, screen_name, status):
+        user_id = self.get_user_id(screen_name)
+        db = self.get_db(user_id)
+        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updated_at = created_at
+        
+        status_id = db.execute("INSERT INTO statuses VALUES(NULL, %s, %s, %s, %s)", status, user_id, created_at, updated_at);
+        
+        return {
+            "id": status_id,
+            "created_at": created_at
+        }
+        
         
 class TimelineHandler(web.RequestHandler):
     def compute_etag(self):
@@ -98,8 +112,9 @@ class UpdateHandler(web.RequestHandler):
     SUPPORTED_METHODS = ("POST", )
 
     def post(self):
-        pass
-
+        screen_name = self.get_argument("screen_name")
+        result = self.application.add_status(screen_name, self.get_argument('status'))
+        self.write(result)
         
 if __name__ == "__main__":
     http_server = httpserver.HTTPServer(Application())
