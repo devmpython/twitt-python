@@ -82,7 +82,7 @@ class Application(web.Application):
                 "id": row["user_id"],
                 "screen_name": row["screen_name"],
             }
-        }, sorted(rows, key=operator.itemgetter("created_at"))[0:limit])
+        }, sorted(rows, reverse=True, key=operator.itemgetter("created_at"))[0:limit])
 
     def user_statuses(self, username, limit=20):
         user_id = self.get_user_id(username)
