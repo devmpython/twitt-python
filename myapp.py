@@ -4,6 +4,7 @@ import json
 import datetime
 import operator
 
+
 class Application(web.Application):
     def __init__(self):
         handlers = [
@@ -132,7 +133,7 @@ class TimelineHandler(web.RequestHandler):
             statuses = self.application.user_statuses(screen_name)
 
         if statuses:
-            self.write(json.dumps(statuses))
+            self.write(json.dumps(statuses), separators=(',', ':'))
             self.set_header("Content-type", "application/json; charset=UTF-8")
         else:
             self.set_status(204)
