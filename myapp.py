@@ -5,6 +5,10 @@ import datetime
 import operator
 
 
+class UserNotFoundException(Exception):
+    pass
+
+
 class Application(web.Application):
     def __init__(self):
         handlers = [
@@ -39,7 +43,7 @@ class Application(web.Application):
             row = db.get("SELECT id FROM users WHERE screen_name=%s LIMIT 1", username)
             if row:
                 return row["id"]
-        raise Exception("user not found")
+        raise UserNotFoundException("user not found")
 
     def get_db(self, user_id):
         return self.dbs[(user_id-1) % 4]
@@ -131,8 +135,10 @@ class TimelineHandler(web.RequestHandler):
                 statuses = self.application.friends_statuses(screen_name)
             else:
                 statuses = self.application.user_statuses(screen_name)
-        except:
+        except UserNotFoundException:
             self.set_status(204)
+        except:
+            self.set_status(500)
 
         if statuses:
             self.write(json.dumps(statuses, separators=(',', ':')))
@@ -153,5 +159,5 @@ class UpdateHandler(web.RequestHandler):
 if __name__ == "__main__":
     http_server = httpserver.HTTPServer(Application())
     http_server.bind(8888)
-    http_server.start(20)
+    http_server.start(5)
     ioloop.IOLoop.instance().start()
