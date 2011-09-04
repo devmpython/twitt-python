@@ -1,22 +1,24 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+http://devmeetings.pl/trainings/wydajno%C5%9B%C4%87-nodejs-kontra-reszta-%C5%9Bwiata
+"""
+
 from tornado import ioloop, web, httpserver, database
 import json
 import datetime
 import operator
 
 
-class UserNotFoundException(Exception):
-    pass
-
-
 class Application(web.Application):
     def __init__(self):
-        handlers = [
+        handlers = (
             (r"/statuses/(?P<req_type>home|user)_timeline.json", TimelineHandler),
             (r"/statuses/update.json", UpdateHandler),
-        ]
+        )
 
-        self.dbs = [
+        self._dbs = (
             database.Connection(host="10.1.1.10",
                                 user="devcamp",
                                 password="devcamp",
@@ -33,32 +35,54 @@ class Application(web.Application):
                                 user="devcamp",
                                 password="devcamp",
                                 database="twitter4"),
-        ]
-        web.Application.__init__(self, handlers)
+        )
+        super(Application, self).__init__(handlers)
 
     def get_user_id(self, username):
         """Tries to find user with such name in all databases."""
         row = None
-        for db in self.dbs:
+        for db in self._dbs:
             row = db.get("SELECT id FROM users WHERE screen_name=%s LIMIT 1", username)
             if row:
                 return row["id"]
-        raise UserNotFoundException("user not found")
+        raise None
 
-    def get_db(self, user_id):
-        return self.dbs[(user_id-1) % 4]
+    def _get_db(self, user_id):
+        """Get the right db instance (partition) based on user_id index."""
+        return self._dbs[(user_id - 1) % 4]
 
-    def friends_statuses(self, username, limit=20):
-        user_id = self.get_user_id(username)
-        db = self.get_db(user_id)
-        ids = (set(), set(), set(), set())
-        for row in db.iter("SELECT follower_id AS id from followers "
-                           "WHERE user_id=%s", user_id):
-            ids[(row["id"] - 1) % 4].add(row["id"])
 
-        ids[(user_id - 1) % 4].add(user_id)
-
+    def user_statuses(self, user_id, limit=20):
+        """Returns user statuses."""
         query = """
+        SELECT id, created_at, text
+        FROM statuses
+        WHERE user_id=%s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """
+        db = self._get_db(user_id)
+
+        return [{
+            "id": row["id"],
+            "created_at": row["created_at"].isoformat(),
+            "text": row["text"],
+        } for row in db.iter(query, user_id, limit)]
+
+    def __friends_ids(self, user_id):
+        query = """
+        SELECT follower_id AS id
+        FROM followers
+        WHERE user_id=%s"""
+        db = self._get_db(user_id)
+        friends_ids = (set(), set(), set(), set())
+        for row in db.iter(query, user_id):
+            friends_ids[(row["id"] - 1) % 4].add(row["id"])
+        return friends_ids
+
+    def friends_statuses(self, user_id, limit=20):
+        """Returns friends statuses (combined with user statues)"""
+        query_template = """
         SELECT statuses.created_at AS created_at,
                statuses.text AS text,
                statuses.id AS stat_id,
@@ -70,16 +94,26 @@ class Application(web.Application):
         ORDER BY created_at DESC
         LIMIT %s
         """
+        ids = self.__friends_ids(user_id)
+        ids[(user_id - 1) % 4].add(user_id)
+
         rows = []
 
-        for i, db in enumerate(self.dbs):
+        for i, db in enumerate(self._dbs):
             if not ids[i]:
                 continue
-            q_str = query % (",".join("%s" for i in xrange(len(ids[i]))), "%s")
+            query = query_template % (",".join("%s" for i in ids[i]), "%s")
             params = list(ids[i])
             params.append(limit)
-            rows.extend(db.query(q_str, *params))
+            results = db.query(query, *params)
+            if results:
+                rows.extend(results)
 
+        if not rows:
+            return []
+
+        rows = sorted(rows, reverse=True,
+                      key=operator.itemgetter("created_at"))[0:limit]
         return map(lambda row: {
             "created_at": row["created_at"].isoformat(),
             "text": row["text"],
@@ -89,34 +123,21 @@ class Application(web.Application):
                 "id": row["user_id"],
                 "screen_name": row["screen_name"],
             }
-        }, sorted(rows, reverse=True, key=operator.itemgetter("created_at"))[0:limit])
+        }, rows)
 
-    def user_statuses(self, username, limit=20):
-        user_id = self.get_user_id(username)
-        db = self.get_db(user_id)
-        rows = db.iter("SELECT id, created_at, text FROM statuses "
-                       "WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
-                       user_id, limit)
-        result = []
-        for row in rows:
-            result.append({
-                "id": row["id"],
-                "created_at": row["created_at"].isoformat(), # .strftime("%a %b %d %H:%M:%S %z %Y"),
-                "text": row["text"]
-            })
-        return result
-
-    def add_status(self, screen_name, status):
-        user_id = self.get_user_id(screen_name)
-        db = self.get_db(user_id)
-        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        updated_at = created_at
-
-        status_id = db.execute("INSERT INTO statuses VALUES(NULL, %s, %s, %s, %s)", status, user_id, created_at, updated_at);
+    def add_status(self, user_id, text):
+        """Adds status of specific user."""
+        query = """
+        INSERT INTO statuses (text, user_id, created_at, updated_at)
+        VALUES (%s, %s, %s, %s)
+        """
+        db = self._get_db(user_id)
+        now = datetime.datetime.now()
+        status_id = db.execute(query, text, user_id, now, now);
 
         return {
             "id": status_id,
-            "created_at": created_at
+            "created_at": now
         }
 
 
@@ -129,35 +150,42 @@ class TimelineHandler(web.RequestHandler):
 
     def get(self, req_type):
         screen_name = self.get_argument("screen_name")
+        user_id = self.application.get_user_id(screen_name)
+        if not user_id:
+            raise web.HTTPError(404)
+
         statuses = None
-        try:
-            if req_type == "home":
-                statuses = self.application.friends_statuses(screen_name)
-            else:
-                statuses = self.application.user_statuses(screen_name)
-        except UserNotFoundException:
-            self.set_status(204)
-        except:
-            self.set_status(500)
+        if req_type == "home":
+            statuses = self.application.friends_statuses(user_id)
+        else:
+            statuses = self.application.user_statuses(user_id)
 
         if statuses:
             self.write(json.dumps(statuses, separators=(',', ':')))
             self.set_header("Content-type", "application/json; charset=UTF-8")
         else:
             self.set_status(204)
-        self.finish()
 
 
 class UpdateHandler(web.RequestHandler):
-    SUPPORTED_METHODS = ("POST", )
+    SUPPORTED_METHODS = ("POST",)
 
     def post(self):
         screen_name = self.get_argument("screen_name")
-        result = self.application.add_status(screen_name, self.get_argument('status'))
+        status_text = self.get_argument("status")
+        user_id = self.application.get_user_id(screen_name)
+        if not user_id:
+            raise web.HTTPError(404)
+
+        result = self.application.add_status(screen_name, status_text)
         self.write(result)
+
 
 if __name__ == "__main__":
     http_server = httpserver.HTTPServer(Application())
-    http_server.bind(8888)
-    http_server.start(5)
+    http_server.listen(8888)
+    # TODO: figure out what causes the problems with db connections
+    #       when forking several worker processes
+    # http_server.bind(8888)
+    # http_server.start(0)
     ioloop.IOLoop.instance().start()
